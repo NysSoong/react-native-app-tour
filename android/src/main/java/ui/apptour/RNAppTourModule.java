@@ -64,71 +64,82 @@ public class RNAppTourModule extends ReactContextBaseJavaModule {
 
     @ReactMethod
     public void ShowSequence(final ReadableArray views, final ReadableMap props, final Promise promise) {
-        final Activity activity = this.getCurrentActivity();
+        // findViewById is faster than UIManagerModule, avoid bug
+        boolean canGetRefAllViews = true;
         final List<TapTarget> targetViews = new ArrayList<TapTarget>();
-
-        final Dialog dialog = new AlertDialog.Builder(activity).create();
-
-        activity.runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                UIManagerModule uiManager = getReactApplicationContext().getNativeModule(UIManagerModule.class);
-
-                uiManager.addUIBlock(new UIBlock() {
-                    @Override
-                    public void execute(NativeViewHierarchyManager nativeViewHierarchyManager) {
-                        for (int i = 0; i < views.size(); i++) {
-                            int view = views.getInt(i);
-                            View refView = null;
-
-                            try {
-                                refView = nativeViewHierarchyManager.resolveView(view);
-                            } catch (Exception exception) {
-                                continue;
-                            }
-
-                            TapTarget tapTarget = generateTapTarget(refView, props.getMap(String.valueOf(view)));
-                            targetViews.add(tapTarget);
-                        }
-
-                        TapTargetSequence tapTargetSequence = new TapTargetSequence(dialog).targets(targetViews);
-                        tapTargetSequence.considerOuterCircleCanceled(true);
-
-                        tapTargetSequence.listener(new TapTargetSequence.Listener() {
-                            @Override
-                            public void onSequenceFinish() {
-                                WritableMap params = Arguments.createMap();
-                                params.putBoolean("finish", true);
-
-                                sendEvent(getReactApplicationContext(), "onFinishSequenceEvent", params);
-
-                                // dismiss dialog on finish
-                                if (dialog != null && dialog.isShowing()) {
-                                    dialog.dismiss();
-                                }
-                            }
-
-                            @Override
-                            public void onSequenceStep(TapTarget lastTarget, boolean targetClicked) {
-                                WritableMap params = Arguments.createMap();
-                                params.putBoolean("next_step", true);
-
-                                sendEvent(getReactApplicationContext(), "onShowSequenceStepEvent", params);
-                            }
-
-                            @Override
-                            public void onSequenceCanceled(TapTarget lastTarget) {
-                                WritableMap params = Arguments.createMap();
-                                params.putBoolean("cancel_step", true);
-
-                                sendEvent(getReactApplicationContext(), "onCancelStepEvent", params);
-                            }
-                        }).continueOnCancel(true);
-                        tapTargetSequence.start();
-                    }
-                });
+        for (int i = 0; i < views.size(); i++) {
+            int viewId = views.getInt(i);
+            View view = this.getCurrentActivity().findViewById(viewId);
+            if (view == null) {
+              canGetRefAllViews = false;
+              break;
             }
-        });
+            targetViews.add(generateTapTarget(view, props.getMap(String.valueOf(viewId))));
+        }
+
+        if (canGetRefAllViews) {
+          showSequence(targetViews);
+        }
+        else {
+          // Try to get reference by UIManagerModule
+          UIManagerModule uiManager = reactContext.getNativeModule(UIManagerModule.class);
+          targetViews.clear();
+          uiManager.addUIBlock(new UIBlock() {
+              @Override
+              public void execute(NativeViewHierarchyManager nativeViewHierarchyManager) {
+                  for (int i = 0; i < views.size(); i++) {
+                      int viewId = views.getInt(i);
+                      View view = nativeViewHierarchyManager.resolveView(viewId);
+                      targetViews.add(generateTapTarget(view, props.getMap(String.valueOf(viewId))));
+                  }
+                  showSequence(targetViews);
+              }
+          });
+        }
+    }
+
+    private void showSequence(final List<TapTarget> targetViews) {
+      final Activity activity = this.getCurrentActivity();
+      final Dialog dialog = new AlertDialog.Builder(activity).create();
+      activity.runOnUiThread(new Runnable() {
+          @Override
+          public void run() {
+              TapTargetSequence tapTargetSequence = new TapTargetSequence(dialog).targets(targetViews);
+              tapTargetSequence.listener(new TapTargetSequence.Listener() {
+                  @Override
+                  public void onSequenceFinish() {
+                      WritableMap params = Arguments.createMap();
+                      params.putBoolean("finish", true);
+                      sendEvent(reactContext, "onFinishSequenceEvent", params);
+                      // dismiss dialog on finish
+                      if (dialog != null && dialog.isShowing()) {
+                          dialog.dismiss();
+                      }
+
+                  }
+
+                  @Override
+                  public void onSequenceStep(TapTarget lastTarget, boolean targetClicked) {
+                      WritableMap params = Arguments.createMap();
+                      params.putBoolean("next_step", true);
+                      sendEvent(reactContext, "onShowSequenceStepEvent", params);
+                  }
+
+                  @Override
+                  public void onSequenceCanceled(TapTarget lastTarget) {
+                      WritableMap params = Arguments.createMap();
+                      params.putBoolean("cancel_step", true);
+                      sendEvent(reactContext, "onCancelStepEvent", params);
+                      if (dialog != null && dialog.isShowing()) {
+                          dialog.dismiss();
+                      }
+                  }
+
+              })
+              .continueOnCancel(true);
+              tapTargetSequence.start();
+          }
+    });
     }
 
     @ReactMethod
